@@ -35,6 +35,14 @@ const Field kFields[] = {
 	{ "camFx",         'i', true },    // 0..13 (WebcamOverlay.fx)
 	{ "camBackground", 'i', true },    // 0 keep · 1 green · 2 blue · 3 AI
 	{ "replayEnabled", 'b', true },    // Instant Replay — มีเมื่องาน replay เข้ามาแล้ว
+	{ "replaySeconds", 'i', true },    // 30..120 วินาที
+	{ "chatOverlay",   'b', true },    // แชทไลฟ์บนจอ
+	{ "pad3d",         'b', true },    // จอย overlay แบบ 3D เอียงตามไจโร
+	{ "frameGen",      'b', true },    // เฟรมกลาง 60 → 120 (PC ที่ไม่รองรับ = ไม่มีผล)
+	// title ID อื่นของเกมเดียวกัน (คนละโซน เช่น GTA 6 มี PPSA ต่างกัน US/JP/AU) — คั่นด้วย , · เทียบเฉพาะส่วนหน้า (ตัด _00)
+	{ "titleIdAlso",   's', false },
+	// จับเกมจากชื่อเมื่อ title ID ไม่ตรง — หลายคำคั่นด้วย , (เกมใหม่ที่ยังไม่รู้ title ID / ต่างโซน)
+	{ "nameMatch",     's', false },
 };
 
 const char *kSettingsKey = "pswrap/gameProfiles";
@@ -45,6 +53,13 @@ bool clampField(const Field &f, const QVariant &in, QVariant &out)
 		return false;
 	if (f.type == 'b') {
 		out = in.toBool();
+		return true;
+	}
+	if (f.type == 's') {
+		const QString str = in.toString().simplified().left(200);
+		if (str.isEmpty())
+			return false;
+		out = str;
 		return true;
 	}
 	bool ok = false;
@@ -62,6 +77,8 @@ bool clampField(const Field &f, const QVariant &in, QVariant &out)
 		v = qBound(0, v, 13);
 	else if (k == "camBackground")
 		v = qBound(0, v, 3);
+	else if (k == "replaySeconds")
+		v = qBound(30, v, 120);
 	if (!ok)
 		return false;
 	out = v;
@@ -77,6 +94,85 @@ unsigned int defaultBitrate(int resolution)
 	case CHIAKI_VIDEO_RESOLUTION_PRESET_1080p: return 15000;
 	default: return 0;
 	}
+}
+
+// ---------- preset แนะนำที่มากับตัวโปรแกรม ----------
+// title_ids = title ID ที่รู้แล้ว (คั่นด้วย , — ตัวแรกเป็น key อีกส่วนเป็น titleIdAlso)
+// name_match = กันเหนียวเผื่อ title ID เปลี่ยน/ยังไม่รู้ — จับจากชื่อเกม แล้ว adoptTitleId จำ title ID จริงเอง
+// fields = JSON ของค่าตั้งต้น (ผ่าน normalize อีกชั้น → ช่องที่ผิด/เกินช่วงจะหล่นออกเอง)
+struct BuiltIn { const char *id; const char *name; const char *title_ids; const char *name_match; const char *note; const char *fields; };
+const BuiltIn kBuiltIns[] = {
+	{
+		"gta6",
+		"Grand Theft Auto VI",
+		// PPSA01547 = US/UK/EU/KR · PPSA29660 = JP · PPSA38500 = AU (จาก PlayStation Store) — ตัวแรกเป็น key อีกสองเป็น titleIdAlso
+		"PPSA01547,PPSA29660,PPSA38500",
+		"grand theft auto vi,grand theft auto 6,gta vi,gta 6,gtavi",
+		QT_TRANSLATE_NOOP("PsWrapGameProfiles", "Open world at speed: 1080p 60 fps at 30 Mbps, Frame Gen to 120, the 3D controller and a 60 s Instant Replay for the stunts. Stats and clock stay off so nothing covers the minimap or the wanted stars."),
+		"{\"resolution\":4,\"fps\":60,\"bitrate\":30000,\"frameGen\":true,\"pad3d\":true,\"padOverlay\":true,\"micOverlay\":true,\"statsOverlay\":false,\"clockOverlay\":false,\"chatOverlay\":false,\"replayEnabled\":true,\"replaySeconds\":60}"
+	},
+};
+
+const BuiltIn *findBuiltIn(const QString &id)
+{
+	for (const BuiltIn &b : kBuiltIns) {
+		if (id == QLatin1String(b.id))
+			return &b;
+	}
+	return nullptr;
+}
+
+QString builtInKey(const BuiltIn &b)
+{
+	return QStringLiteral("builtin:%1").arg(QString::fromLatin1(b.id));
+}
+
+// ค่าตั้งต้นของ built-in ก่อน normalize (ผู้เรียกเรียก normalize เอง)
+QVariantMap builtInRawFields(const BuiltIn &b)
+{
+	QJsonParseError err{};
+	const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(b.fields), &err);
+	if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+		qCWarning(chiakiGui) << "PS-WRAP game profiles: built-in" << b.id << "has invalid fields JSON:" << err.errorString();
+		return {};
+	}
+	return doc.object().toVariantMap();
+}
+
+// title ID เทียบเฉพาะส่วนหน้า: PS5 รายงาน PPSA01547 ส่วน Store เขียน PPSA01547_00
+QString baseTitleId(const QString &id)
+{
+	const QString t = id.trimmed().toUpper();
+	const int u = t.indexOf(QLatin1Char('_'));
+	return u > 0 ? t.left(u) : t;
+}
+
+bool titleIdInList(const QString &list, const QString &title_id)
+{
+	if (list.isEmpty() || title_id.isEmpty())
+		return false;
+	const QString want = baseTitleId(title_id);
+	const QStringList ids = list.split(QLatin1Char(','), Qt::SkipEmptyParts);
+	for (const QString &raw : ids) {
+		if (baseTitleId(raw) == want)
+			return true;
+	}
+	return false;
+}
+
+// nameMatch: หลายคำคั่นด้วย , · ตรงแบบ contains ไม่สนใจตัวเล็กใหญ่ (ชื่อเกมต่างภูมิภาคต่างกันเล็กน้อย)
+bool nameMatches(const QString &patterns, const QString &app)
+{
+	if (patterns.isEmpty() || app.isEmpty())
+		return false;
+	const QString hay = app.simplified().toLower();
+	const QStringList pats = patterns.split(QLatin1Char(','), Qt::SkipEmptyParts);
+	for (const QString &raw : pats) {
+		const QString pat = raw.simplified().toLower();
+		if (!pat.isEmpty() && hay.contains(pat))
+			return true;
+	}
+	return false;
 }
 
 } // namespace
@@ -183,6 +279,83 @@ QVariantMap PsWrapGameProfiles::profile(const QString &title_id) const
 	return m;
 }
 
+// ---------- preset แนะนำ (built-in) ----------
+
+QVariantList PsWrapGameProfiles::builtInPresets() const
+{
+	QVariantList out;
+	for (const BuiltIn &b : kBuiltIns) {
+		QVariantMap m;
+		m[QStringLiteral("id")] = QString::fromLatin1(b.id);
+		m[QStringLiteral("name")] = QString::fromUtf8(b.name);
+		m[QStringLiteral("titleIds")] = QString::fromLatin1(b.title_ids);
+		m[QStringLiteral("nameMatch")] = QString::fromLatin1(b.name_match);
+		m[QStringLiteral("note")] = tr(b.note);
+		m[QStringLiteral("fields")] = normalize(builtInRawFields(b));
+		m[QStringLiteral("installedKey")] = installedKeyForBuiltIn(QString::fromLatin1(b.id));
+		out.append(m);
+	}
+	return out;
+}
+
+QVariantMap PsWrapGameProfiles::builtInPreset(const QString &id, const QString &title_id) const
+{
+	const BuiltIn *b = findBuiltIn(id);
+	if (!b)
+		return {};
+	QVariantMap m = normalize(builtInRawFields(*b));
+	m[QStringLiteral("name")] = QString::fromUtf8(b->name);
+	m[QStringLiteral("nameMatch")] = QString::fromLatin1(b->name_match);
+
+	QStringList ids = QString::fromLatin1(b->title_ids).split(QLatin1Char(','), Qt::SkipEmptyParts);
+	for (QString &id : ids)
+		id = id.trimmed();
+	ids.removeAll(QString());
+
+	// key: title ID ของเกมที่รันอยู่ → title ID แรกของ built-in → key ชั่วคราว (รอ nameMatch จับ)
+	const QString given = title_id.trimmed();
+	QString key = given;
+	if (key.isEmpty())
+		key = ids.isEmpty() ? builtInKey(*b) : ids.first();
+	m[QStringLiteral("titleId")] = key;
+
+	// title ID ที่เหลือจาก key → เก็บเป็น titleIdAlso ไว้เทียบตอนเริ่มสตรีม
+	QStringList also;
+	for (const QString &id : ids) {
+		if (baseTitleId(id) != baseTitleId(key))
+			also.append(id);
+	}
+	if (!also.isEmpty())
+		m[QStringLiteral("titleIdAlso")] = also.join(QLatin1Char(','));
+	return m;
+}
+
+QString PsWrapGameProfiles::addBuiltInPreset(const QString &id, const QString &title_id)
+{
+	const QVariantMap p = builtInPreset(id, title_id);
+	if (p.isEmpty() || !saveProfile(p))
+		return {};
+	return p.value(QStringLiteral("titleId")).toString();
+}
+
+QString PsWrapGameProfiles::installedKeyForBuiltIn(const QString &id) const
+{
+	const BuiltIn *b = findBuiltIn(id);
+	if (!b)
+		return {};
+	const QJsonObject all = data.value(QStringLiteral("profiles")).toObject();
+	if (all.contains(builtInKey(*b)))
+		return builtInKey(*b);
+	// เก็บด้วย title ID ของเกม (รวมที่ adoptTitleId ย้ายไปเอง) หรือ nameMatch ติดมากับ preset
+	for (auto it = all.begin(); it != all.end(); ++it) {
+		if (titleIdInList(QString::fromLatin1(b->title_ids), it.key()))
+			return it.key();
+		if (it.value().toObject().value(QStringLiteral("nameMatch")).toString() == QLatin1String(b->name_match))
+			return it.key();
+	}
+	return {};
+}
+
 QVariantMap PsWrapGameProfiles::normalize(const QVariantMap &in)
 {
 	QVariantMap out;
@@ -281,6 +454,47 @@ void PsWrapGameProfiles::refreshRunningGames()
 	emit runningGamesChanged();
 }
 
+// ---------- จับเกมเข้ากับ preset ----------
+
+QString PsWrapGameProfiles::matchKey(const QString &title_id, const QString &app) const
+{
+	const QJsonObject all = data.value(QStringLiteral("profiles")).toObject();
+	if (!title_id.isEmpty() && all.contains(title_id))
+		return title_id;
+	// title ID เดียวกันแต่เขียนต่าง (PPSA01547 / PPSA01547_00) หรือเป็น title ID โซนอื่นของเกมเดียวกัน
+	if (!title_id.isEmpty()) {
+		for (auto it = all.begin(); it != all.end(); ++it) {
+			if (baseTitleId(it.key()) == baseTitleId(title_id))
+				return it.key();
+			if (titleIdInList(it.value().toObject().value(QStringLiteral("titleIdAlso")).toString(), title_id))
+				return it.key();
+		}
+	}
+	if (app.isEmpty())
+		return {};
+	for (auto it = all.begin(); it != all.end(); ++it) {
+		if (nameMatches(it.value().toObject().value(QStringLiteral("nameMatch")).toString(), app))
+			return it.key();
+	}
+	return {};
+}
+
+void PsWrapGameProfiles::adoptTitleId(const QString &key, const QString &title_id)
+{
+	if (title_id.isEmpty() || key == title_id)
+		return;
+	QJsonObject all = data.value(QStringLiteral("profiles")).toObject();
+	// title ID นี้มี preset ของตัวเองอยู่แล้ว = ไม่แตะ (matchKey เจอตัวนั้นก่อนอยู่แล้ว)
+	if (!all.contains(key) || all.contains(title_id))
+		return;
+	all[title_id] = all.value(key).toObject();
+	all.remove(key);
+	data[QStringLiteral("profiles")] = all;
+	store();
+	qCInfo(chiakiGui) << "PS-WRAP game profile: learned title ID" << title_id << "for preset" << key;
+	emit profilesChanged();
+}
+
 // ---------- session hook ----------
 
 bool PsWrapGameProfiles::prepareSession(StreamSessionConnectInfo &info, const QVariantList &hosts)
@@ -302,13 +516,20 @@ bool PsWrapGameProfiles::prepareSession(StreamSessionConnectInfo &info, const QV
 			break;
 		}
 	}
-	if (title_id.isEmpty() || !hasProfile(title_id))
+	const QString key = matchKey(title_id, app);
+	if (key.isEmpty())
 		return false;
 
-	pending = profile(title_id);
+	pending = profile(key);
+	// จับได้จากชื่อเกม → ย้าย preset ไปอยู่ใต้ title ID จริง ครั้งต่อไปตรงตัวไม่ต้องเดาชื่อ
+	if (key != title_id) {
+		adoptTitleId(key, title_id);
+		pending[QStringLiteral("titleId")] = title_id;
+	}
 	if (!app.isEmpty())
 		pending[QStringLiteral("runningName")] = app;
-	qCInfo(chiakiGui) << "PS-WRAP game profile: using preset for" << title_id << pending.value(QStringLiteral("name")).toString();
+	qCInfo(chiakiGui) << "PS-WRAP game profile: using preset for" << title_id << pending.value(QStringLiteral("name")).toString()
+		<< (key == title_id ? "(title ID)" : "(matched by game name)");
 
 	// วิดีโอ: PS5 ในบ้านเท่านั้น (เหมือนหน้า Settings › Local PS5)
 	if (!chiaki_target_is_ps5(info.target))

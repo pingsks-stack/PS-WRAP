@@ -4,6 +4,10 @@
 //   → ไม่เขียนทับ setting หลัก
 // - ฝั่ง overlay/facecam/instant replay: ตั้งค่าบน QmlMainWindow ตอน session เริ่ม แล้วคืนค่าเดิมตอนสตรีมจบ
 //   (คืนเฉพาะช่องที่ผู้ใช้ไม่ได้เปลี่ยนเองระหว่างสตรีม)
+// - เกมเดียวกันแต่คนละ title ID (ต่างโซน): preset เก็บ title ID อื่นไว้ใน titleIdAlso ได้ (คั่นด้วย ,)
+// - เกมที่ยังไม่รู้ title ID (เช่นเกมใหม่): preset ตั้ง nameMatch ได้ — จับจากชื่อเกมที่ discovery รายงาน
+//   แล้วจำ title ID จริงให้เองครั้งแรก (adopt) ครั้งต่อไปตรงตัว
+// - preset แนะนำที่มากับตัวหน้า (builtInPresets — เช่น GTA 6): กดเดียวเพิ่มเข้าเป็น preset ของเรา แก้ต่อได้ทุกช่อง
 // - ช่องที่ไม่ได้ตั้งใน preset = ใช้ค่าปัจจุบันตามปกติ · ไม่มี preset = ไม่เปลี่ยนอะไรเลย
 // เก็บเป็น JSON ใน settings ของ profile ปัจจุบัน (key pswrap/gameProfiles — Settings::GetPsWrapGameProfiles)
 #pragma once
@@ -30,6 +34,8 @@ class PsWrapGameProfiles : public QObject
 	Q_PROPERTY(QVariantList runningGames READ runningGames NOTIFY runningGamesChanged)
 	// สวิตช์รวม: ปิด = ไม่ใช้ preset ใดๆ ตอนเริ่มสตรีม
 	Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
+	// preset แนะนำที่มากับตัวโปรแกรม — [{ id, name, nameMatch, note, fields, installedKey }]
+	Q_PROPERTY(QVariantList builtInPresets READ builtInPresets NOTIFY profilesChanged)
 	// preset ที่ใช้กับสตรีมปัจจุบัน (ว่าง = ไม่มี) — ให้ UI ส่วนอื่นแสดง "Preset: <game>"
 	Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY activeProfileChanged)
 	Q_PROPERTY(QString activeTitleId READ activeTitleId NOTIFY activeProfileChanged)
@@ -39,6 +45,7 @@ public:
 
 	QVariantList profiles() const;
 	QVariantList runningGames() const { return running_games; }
+	QVariantList builtInPresets() const;
 	bool enabled() const;
 	void setEnabled(bool v);
 	QString activeProfileName() const { return active_name; }
@@ -54,6 +61,14 @@ public:
 	// window มี property นี้ไหม (clockOverlay / replayEnabled เพิ่มโดยงานอื่น — UI ซ่อนช่องที่ยังไม่มี)
 	Q_INVOKABLE bool windowSupports(const QString &property) const;
 	Q_INVOKABLE QStringList fieldKeys() const;
+
+	// ---------- preset แนะนำ (built-in) ----------
+	// draft ของ preset แนะนำ พร้อมเปิดในตัวแก้ (title_id ว่าง = ใช้ key ชั่วคราว builtin:<id> แล้วจับจากชื่อเกม)
+	Q_INVOKABLE QVariantMap builtInPreset(const QString &id, const QString &title_id = QString()) const;
+	// เพิ่ม preset แนะนำเข้ารายการทันที แล้วคืน key ที่เก็บ (ว่าง = ไม่สำเร็จ)
+	Q_INVOKABLE QString addBuiltInPreset(const QString &id, const QString &title_id = QString());
+	// key ของ preset ที่บันทึกไว้แล้วสำหรับ built-in นี้ (ว่าง = ยังไม่มี)
+	Q_INVOKABLE QString installedKeyForBuiltIn(const QString &id) const;
 
 	// เรียกจาก QmlBackend::createSession หลังรับ connect_info ก่อนสร้าง StreamSession
 	// คืน true ถ้าแก้ video_profile (ผู้เรียกควร sync max fps ใหม่)
@@ -73,9 +88,13 @@ private:
 	void load();
 	void store();
 	void refreshRunningGames();
+	// key ของ preset ที่ตรงกับเกมนี้: title ID ก่อน แล้วค่อยดู nameMatch
+	QString matchKey(const QString &title_id, const QString &app) const;
 	void onSessionChanged(StreamSession *s);
 	void applyWindowFields(const QVariantMap &p);
 	void restoreWindowFields();
+	// จับได้จากชื่อ → ย้าย preset ไปอยู่ใต้ title ID จริง
+	void adoptTitleId(const QString &key, const QString &title_id);
 	static QVariantMap normalize(const QVariantMap &in);
 
 	QPointer<QObject> window;
