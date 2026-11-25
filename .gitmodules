@@ -24,3 +24,6 @@
 [submodule "ps-wrap/third-party/cpp-steam-tools"]
 	path = ps-wrap/third-party/cpp-steam-tools
 	url = https://github.com/streetpea/cpp-steam-tools.git
+[submodule "ps-wrap/vitshim/vi-translator"]
+	path = ps-wrap/vitshim/vi-translator
+	url = https://github.com/vi-translator/vi-translator-desktop.git

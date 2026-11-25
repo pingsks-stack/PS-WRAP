@@ -105,7 +105,8 @@ const BuiltIn kBuiltIns[] = {
 	{
 		"gta6",
 		"Grand Theft Auto VI",
-		// PPSA01547 = US/UK/EU/KR · PPSA29660 = JP · PPSA38500 = AU (จาก PlayStation Store) — ตัวแรกเป็น key อีกสองเป็น titleIdAlso
+		// PPSA01547 = US/UK/EU/KR (ยืนยันจากเครื่องจริง: discovery ของ PS5 รายงานค่านี้) · PPSA29660 = JP · PPSA38500 = AU
+		// ตัวแรกเป็น key อีกสองเป็น titleIdAlso
 		"PPSA01547,PPSA29660,PPSA38500",
 		"grand theft auto vi,grand theft auto 6,gta vi,gta 6,gtavi",
 		QT_TRANSLATE_NOOP("PsWrapGameProfiles", "Open world at speed: 1080p 60 fps at 30 Mbps, Frame Gen to 120, the 3D controller and a 60 s Instant Replay for the stunts. Stats and clock stay off so nothing covers the minimap or the wanted stars."),
